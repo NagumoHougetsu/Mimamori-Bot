@@ -25,6 +25,11 @@ except Exception:
 # -----------------------------
 # Env (互換を吸収)
 # -----------------------------
+MACRODROID_WEBHOOK_URL = (
+    os.environ.get("MACRODROID_WEBHOOK_URL")
+    or "https://trigger.macrodroid.com/04d8be59-b2d8-4206-bd7b-8c48c028e904/change_vol"
+)
+
 LINE_CHANNEL_SECRET = (
     os.environ.get("LINE_CHANNEL_SECRET")
     or os.environ.get("LINE_SECRET")
@@ -58,6 +63,7 @@ DOC_ID = os.environ.get("FIRESTORE_DOC_ID", "settings")
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "group_id": GROUP_ID_DEFAULT,
     "group_ids": [],          # 複数グループへの通知先
+    "webhook_url": "",        # LINEから更新可能なMacroDroidのWebhookURL
     "interval_min": 15,       # 通知間隔（同じアラート連投防止）
     "volume_th": 70,          # 着信音のしきい値（%）
     "paused": False,          # Trueなら通知停止
@@ -446,6 +452,14 @@ async def line_webhook(request: Request):
 
             if text == "/panel":
                 reply(reply_token, flex_panel(s))
+            elif text.startswith("/webhook "):
+                new_url = text[len("/webhook "):].strip()
+                if new_url.startswith("http"):
+                    s["webhook_url"] = new_url
+                    save_settings(s)
+                    reply(reply_token, {"type": "text", "text": f"✅ Webhook URLを更新しました！\n{new_url}"})
+                else:
+                    reply(reply_token, {"type": "text", "text": "エラー: URLは http または https から始まる必要があります。"})
             elif text == "/status":
                 last = s.get("last_status") or {}
                 vol_ring = _to_int(last.get("vol_ring"))
@@ -462,7 +476,7 @@ async def line_webhook(request: Request):
                     reply_token,
                     {
                         "type": "text",
-                        "text": "コマンド:\n/panel … 設定パネル\n/status … 現在状態\n（通知は着信音低下などの注意時に飛びます）",
+                        "text": "コマンド:\n/panel … 設定パネル\n/status … 現在状態\n/webhook [URL] … リアルタイム制御用URLの変更\n（通知は着信音低下などの注意時に飛びます）",
                     },
                 )
 
@@ -499,6 +513,15 @@ async def line_webhook(request: Request):
                 s["desired_vol_notif"] = vv
                 s["desired_ringer_mode"] = 2  # 音量指示時はサイレント/バイブを解除したい
                 save_settings(s)
+                
+                # ★MacroDroidのWebhookへリアルタイム送信
+                current_webhook = s.get("webhook_url") or MACRODROID_WEBHOOK_URL
+                if current_webhook:
+                    try:
+                        requests.get(current_webhook, params={"vol": vv, "mode": 2}, timeout=3)
+                    except Exception as e:
+                        print(f"[Webhook Request Error] {e}")
+
                 # パネル更新（選択状態が反映される）
                 reply(reply_token, flex_panel(s))
 
