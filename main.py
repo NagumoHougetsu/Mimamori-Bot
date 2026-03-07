@@ -57,7 +57,6 @@ DOC_ID = os.environ.get("FIRESTORE_DOC_ID", "settings")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "group_id": GROUP_ID_DEFAULT,
-    "home_radius_m": 500,     # 判定距離
     "interval_min": 15,       # 通知間隔（同じアラート連投防止）
     "volume_th": 70,          # 着信音のしきい値（%）
     "paused": False,          # Trueなら通知停止
@@ -70,12 +69,10 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "desired_ringer_mode": None,  # Optional[int] 0=silent 1=vibrate 2=normal（機種差あり）
 
     "last_status": {
-        "outside": False,
         "vol_ring": None,     # 着信音
         "vol_notif": None,    # 通知音
         "ringer_mode": None,  # 着信モード（0/1/2 想定）
-        "battery": None,      # ★追加：電池残量(%)
-        "map_url": "",
+        "battery": None,      # 電池残量(%)
         "updated_at": "",
     },
 }
@@ -287,11 +284,8 @@ def settings_ui_contents(s: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def flex_settings_notice(s: Dict[str, Any], headline: str = "🧭 見守り操作パネル") -> Dict[str, Any]:
-    radius = int(s.get("home_radius_m", 500))
-
     body_contents: List[Dict[str, Any]] = [
         {"type": "text", "text": headline, "weight": "bold", "size": "md"},
-        {"type": "text", "text": f"判定距離：{radius}m", "size": "sm", "wrap": True},
         {"type": "separator", "margin": "md"},
     ]
     body_contents.extend(settings_ui_contents(s))
@@ -312,18 +306,14 @@ def flex_panel(s: Dict[str, Any]) -> Dict[str, Any]:
 
 def flex_event_notice(
     s: Dict[str, Any],
-    outside: bool,
     vol_ring: Optional[int],
     vol_notif: Optional[int],
     battery: Optional[int],
-    map_url: Optional[str],
     ringer_mode: Optional[int] = None,
     attach_settings_ui: bool = True,
     status_updated_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     volume_th = int(s.get("volume_th", 70))
-
-    loc_state = "外出中" if outside else "在宅中"
 
     ring_low = False
     ring_blocked = False
@@ -346,13 +336,7 @@ def flex_event_notice(
     batt_text = "未取得" if battery is None else f"{int(battery)}%"
 
     header = "📣 状態通知"
-    if outside and ring_blocked:
-        header = "⚠️ 外出＋消音モード"
-    elif outside and ring_low:
-        header = "⚠️ 外出＋着信音量低下"
-    elif outside:
-        header = "📍 外出中"
-    elif ring_blocked:
+    if ring_blocked:
         header = "🔕 消音モード"
     elif ring_low:
         header = "🔔 着信音量低下"
@@ -362,36 +346,11 @@ def flex_event_notice(
 
     body: List[Dict[str, Any]] = [
         {"type": "text", "text": header, "weight": "bold", "size": "md"},
-        {"type": "text", "text": f"位置状態：{loc_state}", "size": "sm", "wrap": True},
         {"type": "text", "text": f"音量状態：{sound_state}", "size": "sm", "wrap": True},
         {"type": "text", "text": f"着信音量：{ring_text}", "size": "sm", "wrap": True},
         {"type": "text", "text": f"通知音量：{notif_text}", "size": "sm", "wrap": True},
         {"type": "text", "text": f"電池残量：{batt_text}", "size": "sm", "wrap": True},
     ]
-
-    if map_url:
-        body.append(
-            {
-                "type": "box",
-                "layout": "baseline",
-                "spacing": "sm",
-                "contents": [
-                    {"type": "text", "text": "位置情報：", "size": "sm", "color": "#555555", "flex": 0},
-                    {
-                        "type": "text",
-                        "text": "Google Mapを開く",
-                        "size": "sm",
-                        "color": "#1E88E5",
-                        "decoration": "underline",
-                        "wrap": True,
-                        "flex": 1,
-                        "action": {"type": "uri", "label": "open", "uri": map_url},
-                    },
-                ],
-            }
-        )
-    else:
-        body.append({"type": "text", "text": "位置情報：未取得", "size": "sm", "wrap": True})
 
     body.append({"type": "text", "text": f"状態更新(JST)：{status_updated_at}", "size": "xxs", "color": "#888888", "wrap": True})
 
@@ -401,11 +360,7 @@ def flex_event_notice(
 
     # ★ここが座布団色の決定ロジック
     bg = "#FFFFFF"          # 通常
-    if outside and (ring_low or ring_blocked):
-        bg = "#FFEBEE"      # 薄赤（危険度MAX）
-    elif outside:
-        bg = "#E3F2FD"      # 薄青（外出）
-    elif (ring_low or ring_blocked):
+    if (ring_low or ring_blocked):
         bg = "#FFF8E1"      # 薄黄（注意）
 
     return {
@@ -418,26 +373,6 @@ def flex_event_notice(
         },
     }
 
-
-def _pick_map_url(data: dict) -> Optional[str]:
-    for k in (
-        "geofence_location_link",
-        "last_loc_link",
-        "last_location_link",
-        "map_url",
-        "mapUrl",
-        "map_link",
-        "mapLink",
-        "location_url",
-        "locationUrl",
-        "google_map_url",
-        "googleMapUrl",
-        "url",
-    ):
-        v = data.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return None
 
 def _bubble_styles(bg: str) -> Dict[str, Any]:
     # Flexの“座布団”色（bubble内の背景色）を指定
@@ -500,23 +435,21 @@ async def line_webhook(request: Request):
                 reply(reply_token, flex_panel(s))
             elif text == "/status":
                 last = s.get("last_status") or {}
-                outside = bool(last.get("outside", False))
                 vol_ring = _to_int(last.get("vol_ring"))
                 vol_notif = _to_int(last.get("vol_notif") or last.get("volume_percent"))  # 互換
                 battery = _to_int(last.get("battery"))
                 ringer_mode = _to_int(last.get("ringer_mode"))
-                map_url = last.get("map_url") or last.get("geofence_location_link") or last.get("last_loc_link")
                 updated_at = last.get("updated_at")
                 reply(
                     reply_token,
-                    flex_event_notice(s, outside, vol_ring, vol_notif, battery, map_url, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at),
+                    flex_event_notice(s, vol_ring, vol_notif, battery, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at),
                 )
             else:
                 reply(
                     reply_token,
                     {
                         "type": "text",
-                        "text": "コマンド:\n/panel … 設定パネル\n/status … 現在状態\n（通知は外出中 or 着信音低下の時だけ飛びます）",
+                        "text": "コマンド:\n/panel … 設定パネル\n/status … 現在状態\n（通知は着信音低下などの注意時に飛びます）",
                     },
                 )
 
@@ -558,14 +491,12 @@ async def line_webhook(request: Request):
 
             elif cmd == "get_info":
                 last = s.get("last_status") or {}
-                outside = bool(last.get("outside", False))
                 vol_ring = _to_int(last.get("vol_ring"))
                 vol_notif = _to_int(last.get("vol_notif") or last.get("volume_percent"))
                 battery = _to_int(last.get("battery"))
                 ringer_mode = _to_int(last.get("ringer_mode"))
-                map_url = last.get("map_url") or last.get("geofence_location_link") or last.get("last_loc_link")
                 updated_at = last.get("updated_at")
-                flex = flex_event_notice(s, outside, vol_ring, vol_notif, battery, map_url, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at)
+                flex = flex_event_notice(s, vol_ring, vol_notif, battery, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at)
                 reply(reply_token, flex)
 
             else:
@@ -583,33 +514,12 @@ async def gps_event(request: Request):
     # ===== 部分更新（未送信の項目で None 上書きしない）=====
     prev = (s.get("last_status") or {}).copy()
 
-    # outside：キーが来た時だけ更新（来てなければ維持）
-    if "outside" in data:
-        # MacroDroid から 0/1 が来る想定もあるので int も救う
-        raw_out = data.get("outside")
-        if isinstance(raw_out, bool):
-            outside = raw_out
-        elif isinstance(raw_out, (int, float)):
-            outside = bool(int(raw_out))
-        else:
-            # "true"/"false" 等が来た場合も救う（雑に）
-            s_out = str(raw_out).strip().lower()
-            outside = s_out in ("1", "true", "t", "yes", "y", "on")
-        prev["outside"] = outside
-    else:
-        outside = bool(prev.get("outside", False))
-
-    # map_url：取れた時だけ更新（取れなければ維持）
-    map_url_new = _pick_map_url(data)
-    if map_url_new:
-        prev["map_url"] = map_url_new
-    map_url = prev.get("map_url")
-
     # 音量＆電池：取れた時だけ更新（取れなければ維持）
     vol_ring_new = _to_int(data.get("vol_ring") or data.get("vol_ring_percent") or data.get("volume_ring_percent") or data.get("volume_ring") or data.get("ring_volume") or data.get("vol_ringtone"))
     if vol_ring_new is not None:
         prev["vol_ring"] = vol_ring_new
     vol_ring = _to_int(prev.get("vol_ring"))
+    
     vol_notif_new = _to_int(data.get("vol_notif") or data.get("vol_notif_percent") or data.get("volume_notif_percent") or data.get("volume_notif") or data.get("notif_volume"))
     if vol_notif_new is not None:
         prev["vol_notif"] = vol_notif_new
@@ -660,12 +570,13 @@ async def gps_event(request: Request):
     save_settings(s)
 
     # -----------------------------
-    # 通知判定（従来どおり）
+    # 通知判定
     # -----------------------------
     volume_th = int(s.get("volume_th", 70))
     ring_low = (vol_ring is not None) and (int(vol_ring) < volume_th)
     ring_blocked = (ringer_mode is not None) and (int(ringer_mode) in (0, 1))
-    alert_needed = outside or ring_low or ring_blocked
+    
+    alert_needed = ring_low or ring_blocked
 
     # /gps のレスポンスは MacroDroid が使う（希望音量を返す）
     resp_base = {
@@ -703,11 +614,9 @@ async def gps_event(request: Request):
 
     flex = flex_event_notice(
         s=s,
-        outside=outside,
         vol_ring=vol_ring,
         vol_notif=vol_notif,
         battery=battery,
-        map_url=map_url,
         ringer_mode=ringer_mode,
         attach_settings_ui=True,
         status_updated_at=status.get("updated_at"),
