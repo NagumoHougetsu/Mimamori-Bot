@@ -526,14 +526,22 @@ async def line_webhook(request: Request):
                 reply(reply_token, flex_panel(s))
 
             elif cmd == "get_info":
-                last = s.get("last_status") or {}
-                vol_ring = _to_int(last.get("vol_ring"))
-                vol_notif = _to_int(last.get("vol_notif") or last.get("volume_percent"))
-                battery = _to_int(last.get("battery"))
-                ringer_mode = _to_int(last.get("ringer_mode"))
-                updated_at = last.get("updated_at")
-                flex = flex_event_notice(s, vol_ring, vol_notif, battery, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at)
-                reply(reply_token, flex)
+                current_webhook = s.get("webhook_url") or MACRODROID_WEBHOOK_URL
+                if current_webhook:
+                    try:
+                        requests.get(current_webhook, params={"mode": "info"}, timeout=3)
+                    except Exception as e:
+                        print(f"[Webhook Request Error] {e}")
+                    reply(reply_token, {"type": "text", "text": "🔄 最新状態をスマホに問い合わせました！\n数秒後に通知が届きます。"})
+                else:
+                    last = s.get("last_status") or {}
+                    vol_ring = _to_int(last.get("vol_ring"))
+                    vol_notif = _to_int(last.get("vol_notif") or last.get("volume_percent"))
+                    battery = _to_int(last.get("battery"))
+                    ringer_mode = _to_int(last.get("ringer_mode"))
+                    updated_at = last.get("updated_at")
+                    flex = flex_event_notice(s, vol_ring, vol_notif, battery, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at)
+                    reply(reply_token, flex)
 
             else:
                 reply(reply_token, {"type": "text", "text": f"unknown cmd: {cmd}"})
@@ -612,7 +620,10 @@ async def gps_event(request: Request):
     ring_low = (vol_ring is not None) and (int(vol_ring) < volume_th)
     ring_blocked = (ringer_mode is not None) and (int(ringer_mode) in (0, 1))
     
-    alert_needed = ring_low or ring_blocked
+    # リアルタイム情報取得の要求があったか
+    force_notify = data.get("force_notify") in (True, "true", "True", 1, "1")
+    
+    alert_needed = ring_low or ring_blocked or force_notify
 
     # /gps のレスポンスは MacroDroid が使う（希望音量を返す）
     resp_base = {
@@ -627,21 +638,22 @@ async def gps_event(request: Request):
     if not alert_needed:
         return resp_base
 
-    if bool(s.get("paused", False)):
+    if bool(s.get("paused", False)) and not force_notify:
         resp_base["reason"] = "paused"
         return resp_base
 
-    interval_min = int(s.get("interval_min", 15))
-    last_alert_at = s.get("last_alert_at")
-    if isinstance(last_alert_at, str) and last_alert_at:
-        try:
-            last_dt = datetime.fromisoformat(last_alert_at.replace("Z", "+00:00"))
-            now_dt = datetime.fromisoformat(now_iso())
-            if (now_dt - last_dt) < timedelta(minutes=interval_min):
-                resp_base["reason"] = "interval"
-                return resp_base
-        except Exception:
-            pass
+    if not force_notify:
+        interval_min = int(s.get("interval_min", 15))
+        last_alert_at = s.get("last_alert_at")
+        if isinstance(last_alert_at, str) and last_alert_at:
+            try:
+                last_dt = datetime.fromisoformat(last_alert_at.replace("Z", "+00:00"))
+                now_dt = datetime.fromisoformat(now_iso())
+                if (now_dt - last_dt) < timedelta(minutes=interval_min):
+                    resp_base["reason"] = "interval"
+                    return resp_base
+            except Exception:
+                pass
 
     # 通知先の取得（自動保存された複数ID ＋ 旧環境変数のID）
     gids = s.get("group_ids", [])
