@@ -57,6 +57,7 @@ DOC_ID = os.environ.get("FIRESTORE_DOC_ID", "settings")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "group_id": GROUP_ID_DEFAULT,
+    "group_ids": [],          # 複数グループへの通知先
     "interval_min": 15,       # 通知間隔（同じアラート連投防止）
     "volume_th": 70,          # 着信音のしきい値（%）
     "paused": False,          # Trueなら通知停止
@@ -427,6 +428,18 @@ async def line_webhook(request: Request):
     for ev in events:
         typ = ev.get("type")
         reply_token = ev.get("replyToken", "")
+        source = ev.get("source", {})
+        sender_id = source.get("groupId") or source.get("userId")
+
+        # 送信元グループ/ユーザーのIDを自動保存（複数対応・手打ち不要）
+        if sender_id:
+            gids = s.get("group_ids", [])
+            if not isinstance(gids, list):
+                gids = []
+            if sender_id not in gids:
+                gids.append(sender_id)
+                s["group_ids"] = gids
+                save_settings(s)
 
         if typ == "message" and ev.get("message", {}).get("type") == "text":
             text = (ev.get("message", {}).get("text") or "").strip()
@@ -607,10 +620,17 @@ async def gps_event(request: Request):
         except Exception:
             pass
 
-    # group_id は Firestore が空文字でも env を救済する
-    group_id = (s.get("group_id") or GROUP_ID_DEFAULT or "").strip()
-    if not group_id:
-        return {"ok": False, "sent": False, "reason": "group_id_missing"}
+    # 通知先の取得（自動保存された複数ID ＋ 旧環境変数のID）
+    gids = s.get("group_ids", [])
+    if not isinstance(gids, list):
+        gids = []
+    
+    old_gid = (s.get("group_id") or GROUP_ID_DEFAULT or "").strip()
+    if old_gid and old_gid not in gids:
+        gids.append(old_gid)
+
+    if not gids:
+        return {"ok": False, "sent": False, "reason": "group_ids_missing"}
 
     flex = flex_event_notice(
         s=s,
@@ -621,7 +641,10 @@ async def gps_event(request: Request):
         attach_settings_ui=True,
         status_updated_at=status.get("updated_at"),
     )
-    push(group_id, flex)
+    
+    # 登録されているすべてのグループに通知を飛ばす
+    for gid in gids:
+        push(gid, flex)
 
     s["last_alert_at"] = now_iso()
     save_settings(s)
