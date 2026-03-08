@@ -231,11 +231,18 @@ def settings_ui_contents(s: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     # 通知間隔
     contents.append({"type": "text", "text": "通知間隔", "weight": "bold", "size": "sm"})
-    contents.extend(two_rows([10, 15, 30, 60], "set_interval", lambda v: v == interval_min, lambda v: f"{v}分"))
+    contents.extend(two_rows([15, 30, 60, 120], "set_interval", lambda v: v == interval_min, lambda v: f"{v}分"))
 
     # 音量基準（判定）
     contents.append({"type": "text", "text": "音量基準", "weight": "bold", "size": "sm", "margin": "md"})
-    contents.extend(two_rows([30, 50, 70, 90], "set_volume", lambda v: v == volume_th, lambda v: f"{v}%"))
+    contents.append(
+        {
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "sm",
+            "contents": [_btn_postback(f"{v}%", _data("set_volume", v), v == volume_th) for v in [25, 50]],
+        }
+    )
 
     # 通知状況
     contents.append({"type": "text", "text": "通知状況", "weight": "bold", "size": "sm", "margin": "md"})
@@ -526,22 +533,23 @@ async def line_webhook(request: Request):
                 reply(reply_token, flex_panel(s))
 
             elif cmd == "get_info":
+                # 裏でこっそり最新情報を要求しておく（通知はあとで届く）
                 current_webhook = s.get("webhook_url") or MACRODROID_WEBHOOK_URL
                 if current_webhook:
                     try:
                         requests.get(current_webhook, params={"mode": "info"}, timeout=3)
                     except Exception as e:
                         print(f"[Webhook Request Error] {e}")
-                    reply(reply_token, {"type": "text", "text": "🔄 最新状態をスマホに問い合わせました！\n数秒後に通知が届きます。"})
-                else:
-                    last = s.get("last_status") or {}
-                    vol_ring = _to_int(last.get("vol_ring"))
-                    vol_notif = _to_int(last.get("vol_notif") or last.get("volume_percent"))
-                    battery = _to_int(last.get("battery"))
-                    ringer_mode = _to_int(last.get("ringer_mode"))
-                    updated_at = last.get("updated_at")
-                    flex = flex_event_notice(s, vol_ring, vol_notif, battery, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at)
-                    reply(reply_token, flex)
+                
+                # すぐに現在のFirestoreの情報を返す
+                last = s.get("last_status") or {}
+                vol_ring = _to_int(last.get("vol_ring"))
+                vol_notif = _to_int(last.get("vol_notif") or last.get("volume_percent"))
+                battery = _to_int(last.get("battery"))
+                ringer_mode = _to_int(last.get("ringer_mode"))
+                updated_at = last.get("updated_at")
+                flex = flex_event_notice(s, vol_ring, vol_notif, battery, ringer_mode=ringer_mode, attach_settings_ui=True, status_updated_at=updated_at)
+                reply(reply_token, flex)
 
             else:
                 reply(reply_token, {"type": "text", "text": f"unknown cmd: {cmd}"})
