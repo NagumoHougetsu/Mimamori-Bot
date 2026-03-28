@@ -287,9 +287,15 @@ def settings_ui_contents(s: Dict[str, Any]) -> List[Dict[str, Any]]:
     )
 
     contents.append(
-        {"type": "text", "text": f"更新(JST)：{now_iso()}", "size": "xxs", "color": "#888888", "wrap": True, "margin": "sm"}
+        {"type": "text", "text": f"Version: {now_iso()}", "size": "xxs", "color": "#888888", "wrap": True, "margin": "sm"}
     )
     contents.append({"type": "text", "text": "※消しても /panel で再表示", "size": "xxs", "color": "#888888", "wrap": True})
+
+    # Webhook URL表示
+    contents.append({"type": "separator", "margin": "md"})
+    contents.append({"type": "text", "text": "現在のWebhook URL", "weight": "bold", "size": "sm"})
+    current_webhook = s.get("webhook_url") or "(未設定)"
+    contents.append({"type": "text", "text": current_webhook, "size": "xxs", "wrap": True, "margin": "sm"})
 
     return contents
 
