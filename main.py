@@ -25,10 +25,7 @@ except Exception:
 # -----------------------------
 # Env (互換を吸収)
 # -----------------------------
-MACRODROID_WEBHOOK_URL = (
-    os.environ.get("MACRODROID_WEBHOOK_URL")
-    or "https://trigger.macrodroid.com/04d8be59-b2d8-4206-bd7b-8c48c028e904/change_vol"
-)
+MACRODROID_WEBHOOK_URL = os.environ.get("MACRODROID_WEBHOOK_URL") or ""
 
 LINE_CHANNEL_SECRET = (
     os.environ.get("LINE_CHANNEL_SECRET")
@@ -483,7 +480,7 @@ async def line_webhook(request: Request):
                     reply_token,
                     {
                         "type": "text",
-                        "text": "コマンド:\n/panel … 設定パネル\n/status … 現在状態\n/webhook [URL] … リアルタイム制御用URLの変更\n（通知は着信音低下などの注意時に飛びます）",
+                        "text": "コマンド:\n/panel … 設定パネル\n/status … 現在状態\n/webhook [URL] … MacroDroidのURLを設定\n（通知は着信音低下などの注意時に飛びます）",
                     },
                 )
 
